@@ -96,9 +96,6 @@
   <!-- NOTIFICAÇÃO TOAST -->
   <div id="toast" class="fixed top-4 left-1/2 -translate-x-1/2 text-white px-6 py-3 rounded-xl shadow-lg text-sm font-semibold z-[200] transition-all opacity-0 pointer-events-none" style="background:var(--forest);"></div>
 
-  <!-- IMPORTAÇÃO DO CLIENTE GEMMA -->
-  <script src="gemma_client.js"></script>
-
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       if(window.lucide) lucide.createIcons();
@@ -107,6 +104,58 @@
     const chatArea = document.getElementById('chat-area');
     let aguardandoResposta = false;
 
+    // ===== LÓGICA DO CLIENTE GEMMA INTEGRADA =====
+    let appConfig = null;
+    let chatHistory = []; 
+
+    async function initGemmaClient() {
+      try {
+        const response = await fetch('config.json');
+        appConfig = await response.json();
+      } catch (error) {
+        console.error("Erro ao carregar config.json:", error);
+      }
+    }
+
+    async function sendToGemma(userMessage) {
+      if (!appConfig) await initGemmaClient();
+
+      chatHistory.push({ role: "user", content: userMessage });
+
+      const glicoseLocal = JSON.parse(localStorage.getItem('ddia_glicose') || '[]');
+      const ultimoRegistro = glicoseLocal.length > 0 ? `${glicoseLocal[glicoseLocal.length - 1].valor} mg/dL` : 'Nenhuma medição registrada ainda';
+      
+      const contextoOculto = `[DADOS DO SISTEMA: Última glicemia do paciente: ${ultimoRegistro}. Medicamento: Metformina. Responda à pergunta abaixo considerando estes fatos.]\n\n`;
+
+      let mensagensParaEnvio = [...chatHistory.slice(-8)]; 
+      
+      const ultimaMsgIndex = mensagensParaEnvio.length - 1;
+      mensagensParaEnvio[ultimaMsgIndex] = { 
+        role: "user", 
+        content: contextoOculto + mensagensParaEnvio[ultimaMsgIndex].content 
+      };
+
+      const payload = {
+        system_prompt: appConfig.system_prompt,
+        messages: mensagensParaEnvio
+      };
+
+      const response = await fetch(appConfig.api_endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) throw new Error("Erro na API");
+
+      const data = await response.json();
+      const botReply = data.response;
+
+      chatHistory.push({ role: "assistant", content: botReply });
+      return botReply;
+    }
+
+    // ===== CONTROLE DA INTERFACE DE CHAT =====
     async function enviarChat(textoOpcional) {
       const input = document.getElementById('chat-input');
       const msg = textoOpcional || input.value.trim();
@@ -124,7 +173,6 @@
       const pensandoEl = addChatMsg('O assistente está pensando...', false, true);
 
       try {
-        // Chamada direta e correta para a função do gemma_client.js
         const resp = await sendToGemma(msg);
         pensandoEl.remove();
         addChatMsg(resp, false);
@@ -185,7 +233,7 @@
 
     function updateSpeakButton() {
       const btn = document.getElementById('fab-speak');
-      if(btn) btn.innerHTML = isSpeaking ? '🔊' : '🔇';
+      if(btn) btn.innerHTML = isSpeaking ? '🔇' : '🔊';
     }
 
     // ===== RECONHECIMENTO DE VOZ (MICROFONE) =====
